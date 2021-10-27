@@ -1,0 +1,40 @@
+name: 'Static Code Analysis'
+description: 'License checks, CodeQL, spotbugs, etc'
+  
+runs:
+  using: "composite"
+  steps:
+   - name: Initialize CodeQL
+      uses: github/codeql-action/init@v1
+      with:
+        languages: java
+
+    - name: Check third-party licenses
+      run: |
+        mvn -B -V -s $GITHUB_WORKSPACE/settings.xml -Dmaven.test.skip=true -DskipTests=true -Djacoco.skip=true \
+        org.codehaus.mojo:license-maven-plugin:2.0.0:add-third-party -Dlicense.outputDirectory=src/main/resources/META-INF/license \
+        -Dlicense.useMissingFile -Dlicense.useRepositoryMissingFiles=false -Dlicense.excludedGroups=com\\.ionanalytics.* \
+        -Dlicense.licenseMergesUrl=file:src/main/license/license-merges.txt \
+        -Dlicense.missingFileUrl=file:src/main/license/license-missing.txt \
+        -Dlicense.overrideUrl=file:src/main/license/license-overrides.txt \
+        -Dlicense.failOnBlacklist=true -Dlicense.failOnMissing=true -Dlicense.excludedScopes=test \
+        -Dlicense.excludedLicenses=file:src/main/license/license-blacklist.txt \
+        -Dlicense.includedLicenses=file:src/main/license/license-whitelist.txt
+
+    - name: Fetch findsecbugs spotbugs plugin
+      run: mvn dependency:copy -Dartifact=com.h3xstream.findsecbugs:findsecbugs-plugin:1.11.0
+
+    - name: Perform Spotbugs Analysis
+      run: |
+        mvn -B -V -s $GITHUB_WORKSPACE/settings.xml -Dmaven.test.skip=true -DskipTests=true \
+        -Dspotbugs.sarifOutput=true -Dspotbugs.sarifFullPath=true -Dspotbugs.threshold=high -Dspotbugs.pluginList=target/dependency/findsecbugs-plugin-1.11.0.jar \
+        com.github.spotbugs:spotbugs-maven-plugin:4.4.1:spotbugs
+      env:
+        MAVEN_USERNAME: ${{ secrets.IONA_GITHUB_PACKAGE_USER }}
+        MAVEN_PASSWORD: ${{ secrets.IONA_GITHUB_PACKAGE_TOKEN }}
+
+    - name: Upload Spotbugs sarif result
+      uses: github/codeql-action/upload-sarif@v1
+      with:
+        sarif_file: target/spotbugsSarif.json
+

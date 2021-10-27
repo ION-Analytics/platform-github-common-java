@@ -1,0 +1,36 @@
+name: "prepare cdflow2 release"
+description: "prepare cdflow2 release"
+
+inputs:
+  release_name:
+    description: "Name of release, default should be adequate"
+    required: true
+    default: "main-${{ github.run_number }}-${{ github.sha }}"
+  capability:
+    description: "key to find AWS authentication info in github actions secrets context. E.g. 'CAPINTERFACE', 'CAPAUTOMATION', etc."
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+  - name: Prepare multilayered jar
+    run: mvn -B -V clean package --file pom.xml -s $GITHUB_WORKSPACE/settings.xml -Dmaven.javadoc.skip=true -DskipTests -Dmaven.test.skip=true -Dmaven.deploy.skip=true -Ddockerfile.skip -DdockerCompose.skip
+    env:
+      MAVEN_USERNAME: ${{ secrets.IONA_GITHUB_PACKAGE_USER }}
+      MAVEN_PASSWORD: ${{ secrets.IONA_GITHUB_PACKAGE_TOKEN }}
+
+  - name: Extract multilayered jar layers
+    run: |
+      cp target/spac-search-api*.jar target/application.jar
+      mkdir target/extracted
+      java -Djarmode=layertools -jar target/application.jar extract --destination target/extracted
+
+  - name: Get latest cdflow2
+    run: curl -Lo infra/cdflow2 https://github.com/mergermarket/cdflow2/releases/latest/download/cdflow2-linux-amd64 && chmod +x infra/cdflow2
+
+  - name: Prepare release
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      AWS_ACCESS_KEY_ID: ${{ format('secrets,{0}_AWS_ACCESS_KEY_ID', ${{ inputs.capability }}
+      AWS_SECRET_ACCESS_KEY: ${{ format('secrets,{0}_AWS_SECRET_ACCESS_KEY', ${{ inputs.capability }}
+    run: infra/cdflow2 release ${{ inputs.release_name }}
