@@ -1,0 +1,88 @@
+name: "prepare cdflow2 release"
+description: "prepare cdflow2 release"
+
+inputs:
+  release_name:
+    description: "Name of release, default should be adequate"
+    required: true
+    default: "main-${{ github.run_number }}-${{ github.sha }}"
+  git_ref:
+    description: "branch, tag, or SHA to check out"
+    required: true
+    default: ''  # default is to use the default branch
+  artifact:
+    description: basename of jar to deploy. Usually matches github repo name
+    required: true
+  java_distribution:
+    description: "Java Distribution (temurin is default)"
+    required: true
+    default: 'temurin'
+  java_version:
+    description: "Java version (default is 11)"
+    required: true
+    default: '11'
+  github_token:
+    description: "Github token"
+    required: true
+  maven_user:
+    description: "Maven User"
+    required: true
+  maven_token:
+    description: "Maven token"
+    required: true
+  aws_access_key_id:
+    description: "AWS_ACCESS_KEY_ID"
+    required: true
+  aws_secret_access_key:
+    description: "AWS_SECRET_ACCESS_KEY"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+  - name: Checkout code
+    uses: actions/checkout@v2
+    with:
+      ref: ${{ inputs.git_ref }}
+
+  - name: Set up JDK11
+    uses: actions/setup-java@v2
+    with:
+      distribution: ${{ inputs.java_distribution }}
+      java-version: ${{ inputs.java_version }}
+      cache: 'maven'
+      server-id: github
+      settings-path: ${{ github.workspace }}
+
+  - name: Cache Maven packages
+    uses: actions/cache@v2
+    with:
+      path: ~/.m2/repository
+      key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+      restore-keys: ${{ runner.os }}-m2-
+
+  - name: Prepare multilayered jar
+    run: mvn -B -V clean package --file pom.xml -s $GITHUB_WORKSPACE/settings.xml -Dmaven.javadoc.skip=true -DskipTests -Dmaven.test.skip=true -Dmaven.deploy.skip=true -Ddockerfile.skip -DdockerCompose.skip
+    shell: bash
+    env:
+      MAVEN_USERNAME: ${{ inputs.maven_user }}
+      MAVEN_PASSWORD: ${{ inputs.maven_token }}
+
+  - name: Extract multilayered jar layers
+    run: |
+      cp target/${{ inputs.artifact }}*.jar target/application.jar
+      mkdir target/extracted
+      java -Djarmode=layertools -jar target/application.jar extract --destination target/extracted
+    shell: bash
+
+  - name: Get latest cdflow2
+    run: curl -Lo infra/cdflow2 https://github.com/mergermarket/cdflow2/releases/latest/download/cdflow2-linux-amd64 && chmod +x infra/cdflow2
+    shell: bash
+
+  - name: Prepare release
+    env:
+      GITHUB_TOKEN: ${{ inputs.github_token }}
+      AWS_ACCESS_KEY_ID: ${{ inputs.aws_access_key_id }}
+      AWS_SECRET_ACCESS_KEY: ${{ inputs.aws_secret_access_key }}
+    run: infra/cdflow2 release ${{ inputs.release_name }}
+    shell: bash

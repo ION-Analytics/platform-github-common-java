@@ -1,0 +1,45 @@
+name: "deploy cdflow2 release"
+description: "deploy cdflow2 release"
+
+inputs:
+  release_name:
+    description: "Name of release, default should be adequate"
+    required: true
+    default: "main-${{ github.run_number }}-${{ github.sha }}"
+  git_ref:
+    description: "branch, tag, or SHA to check out"
+    required: true
+    default: ''  
+  github_token:
+    description: "Github token"
+    required: true
+  environment:
+    description: "live or aslive"
+    required: true
+  aws_access_key_id:
+    description: "AWS_ACCESS_KEY_ID"
+    required: true
+  aws_secret_access_key:
+    description: "AWS_SECRET_ACCESS_KEY"
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+  # why do we need to check out code at all?
+  - name: Check out code
+    uses: actions/checkout@v2
+    with:
+      ref: ${{ inputs.git_ref }}
+
+  - name: Get latest cdflow2
+    run: curl -Lo infra/cdflow2 https://github.com/mergermarket/cdflow2/releases/latest/download/cdflow2-linux-amd64 && chmod +x infra/cdflow2
+    shell: bash
+
+  - name: Deploy to ${{ inputs.environment }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ inputs.aws_access_key_id }}
+      AWS_SECRET_ACCESS_KEY: ${{ inputs.aws_secret_access_key }}
+    run: infra/cdflow2 deploy ${{ inputs.environment }} ${{ inputs.release_name }}
+    shell: bash

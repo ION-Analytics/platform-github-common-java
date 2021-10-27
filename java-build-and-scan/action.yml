@@ -1,0 +1,95 @@
+name: "Java Build"
+description: "Build Java application in Github"
+inputs:
+  git_ref:
+    description: "branch, tag, or SHA to check out"
+    required: true
+    default: ''  # default is to use the default branch
+  github_token:
+    description: "Github token"
+    required: true
+  maven_user:
+    description: "Maven User"
+    required: true
+  maven_token:
+    description: "Maven token"
+    required: true
+  java_distribution:
+    description: "Java Distribution (temurin is default)"
+    required: true
+    default: 'temurin'
+  java_version:
+    description: "Java version (default is 11)"
+    required: true
+    default: '11'
+
+runs:
+  using: "composite"
+  steps:
+  - name: Checkout code
+    uses: actions/checkout@v2
+    with:
+      ref: ${{ inputs.git_ref }}
+
+  - name: Initialize CodeQL
+    uses: github/codeql-action/init@v1
+    with:
+      languages: java
+      queries: security-extended
+
+  - name: Set up JDK11
+    uses: actions/setup-java@v2
+    with:
+      distribution: ${{ inputs.java_distribution }}
+      java-version: ${{ inputs.java_version }}
+      cache: 'maven'
+      server-id: github
+      settings-path: ${{ github.workspace }}
+
+  - name: Cache Maven packages
+    uses: actions/cache@v2
+    with:
+      path: ~/.m2/repository
+      key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+      restore-keys: ${{ runner.os }}-m2-
+
+# assumes repository is defined in pom.xml. mvn deploy runs all prerequisite steps including build
+  - name: Deploy Snapshot
+    run: mvn -B -V -U deploy -s $GITHUB_WORKSPACE/settings.xml
+    shell: bash
+    env:
+      GITHUB_TOKEN: ${{ inputs.github_token }}
+      MAVEN_USERNAME: ${{ inputs.maven_user }}
+      MAVEN_PASSWORD: ${{ inputs.maven_token }}
+
+  - name: Check third-party licenses
+    run: |
+      mvn -B -V -s $GITHUB_WORKSPACE/settings.xml -Dmaven.test.skip=true -DskipTests=true -Djacoco.skip=true \
+      org.codehaus.mojo:license-maven-plugin:2.0.0:add-third-party -Dlicense.outputDirectory=src/main/resources/META-INF/license \
+      -Dlicense.useMissingFile -Dlicense.useRepositoryMissingFiles=false -Dlicense.excludedGroups=com\\.ionanalytics.* \
+      -Dlicense.licenseMergesUrl=https://github.com/ION-Analytics/platform-valid-licenses/tree/main/lib/l-m-p/license-merges.txt \
+      -Dlicense.missingFileUrl=https://github.com/ION-Analytics/platform-valid-licenses/tree/main/lib/l-m-p//license-missing.txt \
+      -Dlicense.overrideUrl=https://github.com/ION-Analytics/platform-valid-licenses/tree/main/lib/l-m-p//license-overrides.txt \
+      -Dlicense.failOnBlacklist=true -Dlicense.failOnMissing=true -Dlicense.excludedScopes=test \
+      -Dlicense.excludedLicenses=https://github.com/ION-Analytics/platform-valid-licenses/tree/main/lib/l-m-p//license-blacklist.txt \
+      -Dlicense.includedLicenses=https://github.com/ION-Analytics/platform-valid-licenses/tree/main/lib/l-m-p//license-whitelist.txt
+    shell: bash
+
+  - name: Fetch findsecbugs spotbugs plugin
+    run: mvn dependency:copy -Dartifact=com.h3xstream.findsecbugs:findsecbugs-plugin:1.11.0
+    shell: bash
+
+  - name: Perform Spotbugs Analysis
+    run: |
+      mvn -B -V -s $GITHUB_WORKSPACE/settings.xml -Dmaven.test.skip=true -DskipTests=true \
+      -Dspotbugs.sarifOutput=true -Dspotbugs.sarifFullPath=true -Dspotbugs.threshold=high -Dspotbugs.pluginList=target/dependency/findsecbugs-plugin-1.11.0.jar \
+      com.github.spotbugs:spotbugs-maven-plugin:4.4.1:spotbugs
+    shell: bash
+    env:
+      MAVEN_USERNAME: ${{ inputs.maven_user }}
+      MAVEN_PASSWORD: ${{ inputs.maven_token }}
+
+  - name: Upload Spotbugs sarif result
+    uses: github/codeql-action/upload-sarif@v1
+    with:
+      sarif_file: target/spotbugsSarif.json
